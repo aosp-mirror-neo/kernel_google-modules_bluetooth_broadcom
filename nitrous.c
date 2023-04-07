@@ -20,7 +20,7 @@
 #include <misc/logbuffer.h>
 #include <linux/kfifo.h>
 #include <linux/slab.h>
-#include <soc/google/exynos-cpupm.h>
+//#include <soc/google/exynos-cpupm.h>
 
 #define STATUS_IDLE	1
 #define STATUS_BUSY	0
@@ -157,11 +157,11 @@ static irqreturn_t nitrous_host_wake_isr(int irq, void *data)
 		logbuffer_log(lpm->log, "host_wake_isr asserted %ptTt.%03ld",
 			&ts, ts.tv_nsec / NSEC_PER_MSEC);
 		pm_stay_awake(lpm->dev);
-		exynos_update_ip_idle_status(lpm->idle_bt_rx_ip_index, STATUS_BUSY);
+		//exynos_update_ip_idle_status(lpm->idle_bt_rx_ip_index, STATUS_BUSY);
 	} else {
 		logbuffer_log(lpm->log, "host_wake_isr de-asserted %ptTt.%03ld",
 			&ts, ts.tv_nsec / NSEC_PER_MSEC);
-		exynos_update_ip_idle_status(lpm->idle_bt_rx_ip_index, STATUS_IDLE);
+		//exynos_update_ip_idle_status(lpm->idle_bt_rx_ip_index, STATUS_IDLE);
 		pm_wakeup_dev_event(lpm->dev, NITROUS_RX_AUTOSUSPEND_DELAY, false);
 	}
 
@@ -581,8 +581,8 @@ static int nitrous_rfkill_set_power(void *data, bool blocked)
 		gpiod_set_value_cansleep(lpm->gpio_power, false);
 		toggle_dbo_ff(lpm);
 		msleep(30);
-		exynos_update_ip_idle_status(lpm->idle_bt_tx_ip_index, STATUS_BUSY);
-		exynos_update_ip_idle_status(lpm->idle_bt_rx_ip_index, STATUS_BUSY);
+		//exynos_update_ip_idle_status(lpm->idle_bt_tx_ip_index, STATUS_BUSY);
+		//exynos_update_ip_idle_status(lpm->idle_bt_rx_ip_index, STATUS_BUSY);
 		dev_dbg(lpm->dev, "REG_ON: High");
 		gpiod_set_value_cansleep(lpm->gpio_power, true);
 		toggle_dbo_ff(lpm);
@@ -599,8 +599,8 @@ static int nitrous_rfkill_set_power(void *data, bool blocked)
 		dev_dbg(lpm->dev, "REG_ON: Low");
 		gpiod_set_value_cansleep(lpm->gpio_power, false);
 		toggle_dbo_ff(lpm);
-		exynos_update_ip_idle_status(lpm->idle_bt_tx_ip_index, STATUS_IDLE);
-		exynos_update_ip_idle_status(lpm->idle_bt_rx_ip_index, STATUS_IDLE);
+		//exynos_update_ip_idle_status(lpm->idle_bt_tx_ip_index, STATUS_IDLE);
+		//exynos_update_ip_idle_status(lpm->idle_bt_rx_ip_index, STATUS_IDLE);
 	}
 	lpm->rfkill_blocked = blocked;
 
@@ -737,11 +737,11 @@ static int nitrous_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, lpm);
 
-	lpm->idle_bt_tx_ip_index = exynos_get_idle_ip_index("bluetooth-tx");
-	exynos_update_ip_idle_status(lpm->idle_bt_tx_ip_index, STATUS_IDLE);
+	//lpm->idle_bt_tx_ip_index = exynos_get_idle_ip_index("bluetooth-tx");
+	//exynos_update_ip_idle_status(lpm->idle_bt_tx_ip_index, STATUS_IDLE);
 
-	lpm->idle_bt_rx_ip_index = exynos_get_idle_ip_index("bluetooth-rx");
-	exynos_update_ip_idle_status(lpm->idle_bt_rx_ip_index, STATUS_IDLE);
+	//lpm->idle_bt_rx_ip_index = exynos_get_idle_ip_index("bluetooth-rx");
+	//exynos_update_ip_idle_status(lpm->idle_bt_rx_ip_index, STATUS_IDLE);
 
 	logbuffer_log(lpm->log, "probe: successful");
 
@@ -784,7 +784,7 @@ static int nitrous_suspend_device(struct device *dev)
 		(lpm->is_suspended ? "asleep" : "awake"));
 
 	nitrous_wake_controller(lpm, false);
-	exynos_update_ip_idle_status(lpm->idle_bt_tx_ip_index, STATUS_IDLE);
+	//exynos_update_ip_idle_status(lpm->idle_bt_tx_ip_index, STATUS_IDLE);
 	lpm->is_suspended = true;
 
 	return 0;
@@ -799,7 +799,7 @@ static int nitrous_resume_device(struct device *dev)
 	logbuffer_log(lpm->log, "resume_device from %s",
 		(lpm->is_suspended ? "asleep" : "awake"));
 
-	exynos_update_ip_idle_status(lpm->idle_bt_tx_ip_index, STATUS_BUSY);
+	//exynos_update_ip_idle_status(lpm->idle_bt_tx_ip_index, STATUS_BUSY);
 	nitrous_wake_controller(lpm, true);
 	lpm->is_suspended = false;
 

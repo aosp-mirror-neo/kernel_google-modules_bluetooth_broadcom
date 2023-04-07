@@ -3,9 +3,9 @@ M ?= $(shell pwd)
 
 KBUILD_OPTIONS := CONFIG_NITROUS=m
 
-EXTRA_SYMBOLS += $(OUT_DIR)/../private/google-modules/bms/misc/Module.symvers
+EXTRA_SYMBOLS += $(OUT_DIR)/../google-modules/bms/misc/Module.symvers
 
-include $(KERNEL_SRC)/../private/google-modules/soc/gs/Makefile.include
+include $(KERNEL_SRC)/../google-modules/soc/msm/Makefile.include
 
 modules modules_install clean:
 	$(MAKE) -C $(KERNEL_SRC) M=$(M) W=1 \
