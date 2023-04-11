@@ -588,7 +588,7 @@ static int nitrous_rfkill_set_power(void *data, bool blocked)
 		toggle_dbo_ff(lpm);
 		/* Set DEV_WAKE to High as part of the power sequence */
 		dev_dbg(lpm->dev, "DEV_WAKE: High - Power sequence");
-		gpiod_set_value_cansleep(lpm->gpio_dev_wake, true);
+		//gpiod_set_value_cansleep(lpm->gpio_dev_wake, true);
 	} else {
 		/* Set DEV_WAKE to Low as part of the power sequence */
 		dev_dbg(lpm->dev, "DEV_WAKE: Low - Power sequence");
@@ -620,10 +620,12 @@ static int nitrous_rfkill_init(struct nitrous_bt_lpm *lpm)
 {
 	int rc;
 
-	lpm->gpio_power = devm_gpiod_get_optional(lpm->dev, "shutdown", GPIOD_OUT_LOW);
-	if (IS_ERR(lpm->gpio_power))
+	lpm->gpio_power = devm_gpiod_get(lpm->dev, "power", GPIOD_OUT_LOW);
+	if (IS_ERR(lpm->gpio_power)) {
+	        dev_info(lpm->dev, "error power gpiod ");
 		return PTR_ERR(lpm->gpio_power);
-
+	}
+	dev_info(lpm->dev, "power gpiod read");
 	lpm->rfkill = rfkill_alloc(
 		"nitrous_bluetooth",
 		lpm->dev,
