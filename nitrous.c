@@ -588,7 +588,7 @@ static int nitrous_rfkill_set_power(void *data, bool blocked)
 		toggle_dbo_ff(lpm);
 		/* Set DEV_WAKE to High as part of the power sequence */
 		dev_dbg(lpm->dev, "DEV_WAKE: High - Power sequence");
-		//gpiod_set_value_cansleep(lpm->gpio_dev_wake, true);
+		gpiod_set_value_cansleep(lpm->gpio_dev_wake, true);
 	} else {
 		/* Set DEV_WAKE to Low as part of the power sequence */
 		dev_dbg(lpm->dev, "DEV_WAKE: Low - Power sequence");
