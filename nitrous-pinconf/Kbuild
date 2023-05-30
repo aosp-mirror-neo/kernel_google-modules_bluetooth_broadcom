@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: GPL-2.0
+obj-$(CONFIG_NITROUS_PINCONF) := nitrous_pinconf.o
