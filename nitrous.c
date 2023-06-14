@@ -39,6 +39,7 @@ struct nitrous_lpm_proc;
 struct nitrous_bt_lpm {
 	struct pinctrl *pinctrls;
 	struct pinctrl_state *pinctrl_default_state;
+	struct pinctrl_state *pinctrl_quiescence_state;
 	struct gpio_desc *gpio_dev_wake;     /* Host -> Dev WAKE GPIO */
 	struct gpio_desc *gpio_host_wake;    /* Dev -> Host WAKE GPIO */
 	struct gpio_desc *gpio_power;        /* GPIO to control power */
@@ -686,6 +687,11 @@ static int nitrous_probe(struct platform_device *pdev)
 			pinctrl_lookup_state(lpm->pinctrls, "default");
 		if (IS_ERR(lpm->pinctrl_default_state))
 			dev_warn(lpm->dev, "Can't get default pinctrl state\n");
+
+		lpm->pinctrl_quiescence_state =
+			pinctrl_lookup_state(lpm->pinctrls, "quiescence");
+		if (IS_ERR(lpm->pinctrl_quiescence_state))
+			dev_warn(lpm->dev, "Can't get quiescence pinctrl state\n");
 	}
 
 	lpm->gpio_dev_wake = devm_gpiod_get_optional(dev, "device-wakeup", GPIOD_OUT_LOW);
@@ -760,9 +766,16 @@ err_lpm_init:
 static int nitrous_remove(struct platform_device *pdev)
 {
 	struct nitrous_bt_lpm *lpm = platform_get_drvdata(pdev);
-
+	int rc = 0;
 	if (!lpm) {
 		return -EINVAL;
+	}
+
+	if (!IS_ERR_OR_NULL(lpm->pinctrl_quiescence_state)) {
+		rc = pinctrl_select_state(lpm->pinctrls,
+					  lpm->pinctrl_quiescence_state);
+		if (unlikely(rc))
+			dev_warn(lpm->dev, "Can't set quiescence pinctrl state\n");
 	}
 
 	logbuffer_log(lpm->log, "removing");
