@@ -35,7 +35,7 @@
 #define DBO_SUPPORTED			1
 
 struct nitrous_lpm_proc;
-
+static struct task_struct *bt_task = NULL;
 struct nitrous_bt_lpm {
 	struct pinctrl *pinctrls;
 	struct pinctrl_state *pinctrl_default_state;
@@ -71,7 +71,9 @@ struct nitrous_bt_lpm {
 #define PROC_BTWAKE	0
 #define PROC_LPM	1
 #define PROC_BTWRITE	2
-#define PROC_TIMESYNC	3
+#define PROC_BTPID	3
+#define PROC_TIMESYNC	4
+
 #define PROC_DIR	"bluetooth/sleep"
 struct proc_dir_entry *bluetooth_dir, *sleep_dir;
 
@@ -142,9 +144,15 @@ static irqreturn_t nitrous_host_wake_isr(int irq, void *data)
 	struct nitrous_bt_lpm *lpm = data;
 	int host_wake;
 	struct timespec64 ts;
+	struct kernel_siginfo host_wake_info;
 
 	host_wake = gpiod_get_value(lpm->gpio_host_wake);
 	dev_dbg(lpm->dev, "Host wake IRQ: %u\n", host_wake);
+
+	memset(&host_wake_info, 0, sizeof(struct kernel_siginfo));
+	host_wake_info.si_signo = SIGIO;
+	host_wake_info.si_code = SI_QUEUE;
+	host_wake_info.si_int = host_wake;
 
 	if (lpm->rfkill_blocked) {
 		dev_err(lpm->dev, "Unexpected Host wake IRQ\n");
@@ -152,6 +160,13 @@ static irqreturn_t nitrous_host_wake_isr(int irq, void *data)
 		return IRQ_HANDLED;
 	}
 
+	if (bt_task != NULL) {
+		if(send_sig_info(host_wake_info.si_signo, &host_wake_info, bt_task) < 0) {
+			dev_dbg(lpm->dev,"could not send signal to bt task pid= %d", bt_task->pid);
+		} else {
+			dev_dbg(lpm->dev,"sent SIGIO signal to bt task pid = %d host_wake = %d", bt_task->pid, host_wake_info.si_int);
+		}
+	}
 	ktime_get_real_ts64(&ts);
 	/* Check whether host_wake is ACTIVE (== 1) */
 	if (host_wake == 1) {
@@ -306,9 +321,11 @@ static ssize_t nitrous_proc_write(struct file *file, const char *buf,
 	struct nitrous_lpm_proc *data = PDE_DATA(file_inode(file));
 	struct nitrous_bt_lpm *lpm = data->lpm;
 	struct timespec64 ts;
-	char lbuf[4];
+	char lbuf[11];
 	int rc;
+	int bt_pid = 0;
 
+	memset(lbuf, 0, sizeof(lbuf));
 	if (count >= sizeof(lbuf))
 		count = sizeof(lbuf) - 1;
 	if (copy_from_user(lbuf, buf, count))
@@ -352,6 +369,16 @@ static ssize_t nitrous_proc_write(struct file *file, const char *buf,
 			nitrous_prepare_uart_tx_locked(lpm, false);
 		}
 		break;
+	case PROC_BTPID:
+		dev_dbg(lpm->dev, "LPM BTPID %s \n", lbuf);
+		sscanf(lbuf, "%d", &bt_pid);
+		dev_info(lpm->dev, "LPM BTHAL PID %d\n", bt_pid);
+		bt_task = pid_task(find_vpid(bt_pid), PIDTYPE_PID);
+		if (bt_task == NULL)
+			dev_info(lpm->dev, "LPM BTPID bt_task is null \n");
+		else
+			dev_info(lpm->dev, "LPM BTPID bt_task found for PID %d\n", bt_pid);
+		break;
 	default:
 		return 0;
 	}
@@ -379,6 +406,7 @@ static void nitrous_lpm_remove_proc_entries(struct nitrous_bt_lpm *lpm)
 		remove_proc_entry("btwrite", sleep_dir);
 		remove_proc_entry("lpm", sleep_dir);
 		remove_proc_entry("btwake", sleep_dir);
+		remove_proc_entry("btpid", sleep_dir);
 		remove_proc_entry("sleep", bluetooth_dir);
 	}
 
@@ -394,7 +422,7 @@ static void nitrous_lpm_remove_proc_entries(struct nitrous_bt_lpm *lpm)
 
 static int nitrous_lpm_init(struct nitrous_bt_lpm *lpm)
 {
-	int rc, proc_size = 3;
+	int rc, proc_size = 4;
 	unsigned long fifo_size = 0;
 	struct proc_dir_entry *entry;
 	struct nitrous_lpm_proc *data;
@@ -444,8 +472,8 @@ static int nitrous_lpm_init(struct nitrous_bt_lpm *lpm)
 		goto fail;
 	}
 	/* Creating read only proc entries "btwake" showing GPIOs state */
-	data[0].operation = PROC_BTWAKE;
-	data[0].lpm = lpm;
+	data[PROC_BTWAKE].operation = PROC_BTWAKE;
+	data[PROC_BTWAKE].lpm = lpm;
 	entry = proc_create_data("btwake", (S_IRUSR | S_IRGRP), sleep_dir,
 				 &nitrous_proc_read_fops, data);
 	if (entry == NULL) {
@@ -455,10 +483,10 @@ static int nitrous_lpm_init(struct nitrous_bt_lpm *lpm)
 		goto fail;
 	}
 	/* read/write proc entries "lpm" */
-	data[1].operation = PROC_LPM;
-	data[1].lpm = lpm;
+	data[PROC_LPM].operation = PROC_LPM;
+	data[PROC_LPM].lpm = lpm;
 	entry = proc_create_data("lpm", (S_IRUSR | S_IRGRP | S_IWUSR),
-			sleep_dir, &nitrous_proc_readwrite_fops, data + 1);
+			sleep_dir, &nitrous_proc_readwrite_fops, data + PROC_LPM);
 	if (entry == NULL) {
 		dev_err(lpm->dev, "Unable to create /proc/%s/lpm entry", PROC_DIR);
 		logbuffer_log(lpm->log, "Unable to create /proc/%s/lpm entry", PROC_DIR);
@@ -466,23 +494,35 @@ static int nitrous_lpm_init(struct nitrous_bt_lpm *lpm)
 		goto fail;
 	}
 	/* read/write proc entries "btwrite" */
-	data[2].operation = PROC_BTWRITE;
-	data[2].lpm = lpm;
+	data[PROC_BTWRITE].operation = PROC_BTWRITE;
+	data[PROC_BTWRITE].lpm = lpm;
 	entry = proc_create_data("btwrite", (S_IRUSR | S_IRGRP | S_IWUSR),
-			sleep_dir, &nitrous_proc_readwrite_fops, data + 2);
+			sleep_dir, &nitrous_proc_readwrite_fops, data + PROC_BTWRITE);
 	if (entry == NULL) {
 		dev_err(lpm->dev, "Unable to create /proc/%s/btwrite entry", PROC_DIR);
 		logbuffer_log(lpm->log, "Unable to create /proc/%s/btwrite entry", PROC_DIR);
 		rc = -ENOMEM;
 		goto fail;
 	}
+	/* read/write proc entries for "btpid"*/
+	data[PROC_BTPID].operation = PROC_BTPID;
+	data[PROC_BTPID].lpm = lpm;
+	entry = proc_create_data("btpid", (S_IRUSR | S_IRGRP | S_IWUSR),
+			sleep_dir, &nitrous_proc_readwrite_fops, data + PROC_BTPID);
+	if (entry == NULL) {
+		dev_err(lpm->dev, "Unable to create /proc/%s/btpid entry", PROC_DIR);
+		logbuffer_log(lpm->log, "Unable to create /proc/%s/btpid entry", PROC_DIR);
+		rc = -ENOMEM;
+		goto fail;
+	}
+
 
 	if (lpm->timesync_state) {
 		/* read/write proc entries "timesync" */
-		data[3].operation = PROC_TIMESYNC;
-		data[3].lpm = lpm;
+		data[PROC_TIMESYNC].operation = PROC_TIMESYNC;
+		data[PROC_TIMESYNC].lpm = lpm;
 		entry = proc_create_data("timesync", (S_IRUSR | S_IRGRP),
-				bluetooth_dir, &nitrous_proc_read_fops, data + 3);
+				bluetooth_dir, &nitrous_proc_read_fops, data + PROC_TIMESYNC);
 		if (entry == NULL) {
 			dev_err(lpm->dev, "Unable to create /proc/bluetooth/timesync entry");
 			logbuffer_log(lpm->log, "Unable to create /proc/bluetooth/timesync entry");
