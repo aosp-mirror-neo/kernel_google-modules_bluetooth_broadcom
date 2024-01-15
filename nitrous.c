@@ -33,8 +33,13 @@
 #define TIMESYNC_ENABLED		2
 #define DBO_NOT_SUPPORTED		0
 #define DBO_SUPPORTED			1
+#define BT_MODE_NON_PASSTHROUGH		0
+#define BT_MODE_PASSTHROUGH		1
+#define BT_MODE_PASSTHROUGH_ON		2
+#define BT_MODE_PASSTHROUGH_OFF		3
 
 struct nitrous_lpm_proc;
+static int bluetooth_mode = BT_MODE_NON_PASSTHROUGH;
 static struct task_struct *bt_task = NULL;
 struct nitrous_bt_lpm {
 	struct pinctrl *pinctrls;
@@ -72,7 +77,9 @@ struct nitrous_bt_lpm {
 #define PROC_LPM	1
 #define PROC_BTWRITE	2
 #define PROC_BTPID	3
-#define PROC_TIMESYNC	4
+#define PROC_BTMODE	4
+#define PROC_TIMESYNC	5
+
 
 #define PROC_DIR	"bluetooth/sleep"
 struct proc_dir_entry *bluetooth_dir, *sleep_dir;
@@ -81,6 +88,8 @@ struct nitrous_lpm_proc {
 	long operation;
 	struct nitrous_bt_lpm *lpm;
 };
+
+static void toggle_timesync(struct nitrous_bt_lpm *lpm, bool enable);
 
 /*
  * Wake up or sleep BT device for Tx.
@@ -189,7 +198,8 @@ static irqreturn_t ntirous_timesync_isr(int irq, void *data)
 	struct nitrous_bt_lpm *lpm = data;
 	ktime_t timestamp;
 	dev_dbg(lpm->dev, "Timesync IRQ: %u\n", gpiod_get_value(lpm->gpio_timesync));
-	if (unlikely(lpm->rfkill_blocked)) {
+	if ((bluetooth_mode == BT_MODE_NON_PASSTHROUGH && unlikely(lpm->rfkill_blocked))
+		|| (bluetooth_mode == BT_MODE_PASSTHROUGH_OFF)) {
 		dev_err(lpm->dev, "Unexpected Timesync IRQ\n");
 		return IRQ_HANDLED;
 	}
@@ -285,6 +295,9 @@ static int nitrous_proc_show(struct seq_file *m, void *v)
 
 	switch (data->operation) {
 	case PROC_BTWAKE:
+		if (bluetooth_mode != BT_MODE_NON_PASSTHROUGH) {
+			return 0;
+		}
 		seq_printf(m, "LPM: %s\nPolarity: %s\nHOST_WAKE: %u\nDEV_WAKE: %u\n",
 			   (lpm->lpm_enabled ? "Enabled" : "Disabled"),
 			   (lpm->wake_polarity ? "High" : "Low"),
@@ -293,6 +306,9 @@ static int nitrous_proc_show(struct seq_file *m, void *v)
 		break;
 	case PROC_LPM:
 	case PROC_BTWRITE:
+		if (bluetooth_mode != BT_MODE_NON_PASSTHROUGH) {
+			return 0;
+		}
 		seq_printf(m, "REG_ON: %s\nLPM: %s\nState: %s\n",
 			   (lpm->rfkill_blocked ? "OFF" : "ON"),
 			   (lpm->lpm_enabled ? "Enabled" : "Disabled"),
@@ -333,6 +349,10 @@ static ssize_t nitrous_proc_write(struct file *file, const char *buf,
 
 	switch (data->operation) {
 	case PROC_LPM:
+		if (bluetooth_mode != BT_MODE_NON_PASSTHROUGH) {
+			dev_info(lpm->dev, "BTMODE is set to passthrough mode, ignoring LPM op %s\n", lbuf);
+			return count;
+		}
 		if (lbuf[0] == '1') {
 			dev_info(lpm->dev, "LPM enabling\n");
 			logbuffer_log(lpm->log, "PROC_LPM: enable");
@@ -350,6 +370,10 @@ static ssize_t nitrous_proc_write(struct file *file, const char *buf,
 		}
 		break;
 	case PROC_BTWRITE:
+		if (bluetooth_mode != BT_MODE_NON_PASSTHROUGH) {
+			dev_info(lpm->dev, "BTMODE is set to passthrough mode, ignoring BTWRITE op %s\n", lbuf);
+			return count;
+		}
 		if (!lpm->lpm_enabled) {
 			dev_info(lpm->dev, "LPM not enabled\n");
 			logbuffer_log(lpm->log, "PROC_BTWRITE: not enabled");
@@ -370,6 +394,10 @@ static ssize_t nitrous_proc_write(struct file *file, const char *buf,
 		}
 		break;
 	case PROC_BTPID:
+		if (bluetooth_mode != BT_MODE_NON_PASSTHROUGH) {
+			dev_info(lpm->dev, "BTMODE is set to passthrough mode, ignoring BTPID op %s\n", lbuf);
+			return count;
+		}
 		dev_dbg(lpm->dev, "LPM BTPID %s \n", lbuf);
 		sscanf(lbuf, "%d", &bt_pid);
 		dev_info(lpm->dev, "LPM BTHAL PID %d\n", bt_pid);
@@ -378,6 +406,33 @@ static ssize_t nitrous_proc_write(struct file *file, const char *buf,
 			dev_info(lpm->dev, "LPM BTPID bt_task is null \n");
 		else
 			dev_info(lpm->dev, "LPM BTPID bt_task found for PID %d\n", bt_pid);
+		break;
+	case PROC_BTMODE:
+		dev_info(lpm->dev, "BTMODE %s \n", lbuf);
+		if (lbuf[0] == '0') {
+			//PT mode is enabled, release GPIOD for power, host_wake and dev_wake
+			if (bluetooth_mode == BT_MODE_PASSTHROUGH) {
+				dev_info(lpm->dev, "BTMODE is already in passthrough mode\n");
+				break;
+			} else {
+				dev_info(lpm->dev, "BTMODE is set to passthrough mode\n");
+				bluetooth_mode = BT_MODE_PASSTHROUGH;
+				devm_gpiod_put(lpm->dev, lpm->gpio_power);
+				devm_gpiod_put(lpm->dev, lpm->gpio_dev_wake);
+				devm_gpiod_put(lpm->dev, lpm->gpio_host_wake);
+				break;
+			}
+		} else if (lbuf[0] == '2') {
+			//BT is on in PT mode
+			bluetooth_mode = BT_MODE_PASSTHROUGH_ON;
+			dev_info(lpm->dev, "setup timesync isr\n");
+			toggle_timesync(lpm, true);
+		} else if (lbuf[0] == '3') {
+			//BT is off in PT mode
+			bluetooth_mode = BT_MODE_PASSTHROUGH_OFF;
+			dev_info(lpm->dev, "unregister timesync isr\n");
+			toggle_timesync(lpm, false);
+		}
 		break;
 	default:
 		return 0;
@@ -407,6 +462,7 @@ static void nitrous_lpm_remove_proc_entries(struct nitrous_bt_lpm *lpm)
 		remove_proc_entry("lpm", sleep_dir);
 		remove_proc_entry("btwake", sleep_dir);
 		remove_proc_entry("btpid", sleep_dir);
+		remove_proc_entry("btmode", sleep_dir);
 		remove_proc_entry("sleep", bluetooth_dir);
 	}
 
@@ -515,7 +571,17 @@ static int nitrous_lpm_init(struct nitrous_bt_lpm *lpm)
 		rc = -ENOMEM;
 		goto fail;
 	}
-
+	/* read/write proc entries for "btmode"*/
+	data[PROC_BTMODE].operation = PROC_BTMODE;
+	data[PROC_BTMODE].lpm = lpm;
+	entry = proc_create_data("btmode", (S_IRUSR | S_IRGRP | S_IWUSR),
+			sleep_dir, &nitrous_proc_readwrite_fops, data + PROC_BTMODE);
+	if (entry == NULL) {
+		dev_err(lpm->dev, "Unable to create /proc/%s/btmode entry", PROC_DIR);
+		logbuffer_log(lpm->log, "Unable to create /proc/%s/btmode entry", PROC_DIR);
+		rc = -ENOMEM;
+		goto fail;
+	}
 
 	if (lpm->timesync_state) {
 		/* read/write proc entries "timesync" */
