@@ -410,16 +410,30 @@ static ssize_t nitrous_proc_write(struct file *file, const char *buf,
 	case PROC_BTMODE:
 		dev_info(lpm->dev, "BTMODE %s \n", lbuf);
 		if (lbuf[0] == '0') {
-			//PT mode is enabled, release GPIOD for power, host_wake and dev_wake
+			if (bluetooth_mode == BT_MODE_NON_PASSTHROUGH) {
+				dev_info(lpm->dev, "BTMODE is already in non-passthrough mode\n");
+				break;
+			} else {
+				dev_info(lpm->dev, "BTMODE is set to non-passthrough mode\n");
+				// TODO: b/322515712 - Support runtime switching between PT and nonPT mode
+				dev_warn(lpm->dev, "Runtime switching between PT and Nonp-PT mode not supported!\n");
+				bluetooth_mode = BT_MODE_NON_PASSTHROUGH;
+				break;
+			}
+		} else if (lbuf[0] == '1') {
 			if (bluetooth_mode == BT_MODE_PASSTHROUGH) {
 				dev_info(lpm->dev, "BTMODE is already in passthrough mode\n");
 				break;
 			} else {
 				dev_info(lpm->dev, "BTMODE is set to passthrough mode\n");
 				bluetooth_mode = BT_MODE_PASSTHROUGH;
-				devm_gpiod_put(lpm->dev, lpm->gpio_power);
-				devm_gpiod_put(lpm->dev, lpm->gpio_dev_wake);
-				devm_gpiod_put(lpm->dev, lpm->gpio_host_wake);
+				// Set bt pins as quiescence
+				if (!IS_ERR_OR_NULL(lpm->pinctrl_quiescence_state)) {
+					rc = pinctrl_select_state(lpm->pinctrls,
+						lpm->pinctrl_quiescence_state);
+					if (unlikely(rc))
+						dev_warn(lpm->dev, "Can't set quiescence pinctrl state\n");
+				}
 				break;
 			}
 		} else if (lbuf[0] == '2') {
