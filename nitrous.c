@@ -78,7 +78,7 @@ struct nitrous_bt_lpm {
 #define PROC_BTWRITE	2
 #define PROC_BTPID	3
 #define PROC_BTMODE	4
-#define PROC_TIMESYNC	5
+#define PROC_TIMESYNC	5 // optional, should always be last
 
 
 #define PROC_DIR	"bluetooth/sleep"
@@ -492,7 +492,7 @@ static void nitrous_lpm_remove_proc_entries(struct nitrous_bt_lpm *lpm)
 
 static int nitrous_lpm_init(struct nitrous_bt_lpm *lpm)
 {
-	int rc, proc_size = 4;
+	int rc, proc_size = PROC_TIMESYNC;
 	unsigned long fifo_size = 0;
 	struct proc_dir_entry *entry;
 	struct nitrous_lpm_proc *data;
