@@ -17,7 +17,7 @@ kernel_module(
     kernel_build = "//private/google-modules/soc/msm:msm_kernel_build",
     visibility = [
         "//private/devices/google:__subpackages__",
-        "//private/google-modules/soc/gs:__pkg__",
+        "//private/google-modules/soc/msm:__pkg__",
     ],
     deps = [
         "//private/google-modules/bms/misc:bms-misc",
