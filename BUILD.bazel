@@ -6,7 +6,6 @@ kernel_module(
     name = "bluetooth.broadcom",
     srcs = glob([
         "**/*.c",
-        "**/*.h",
     ]) + [
         "Kbuild",
         "//private/google-modules/bms/misc:headers",
